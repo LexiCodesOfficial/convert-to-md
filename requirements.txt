@@ -1,0 +1,16 @@
+# Core document conversion
+pdfplumber>=0.10.0
+python-docx>=1.1.0
+python-pptx>=0.6.23
+openpyxl>=3.1.0
+
+# Image OCR
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
+# Video transcription (optional — install manually if needed)
+moviepy>=1.0.3
+openai-whisper>=20231117
+
+# Progress / CLI
+tqdm>=4.66.0

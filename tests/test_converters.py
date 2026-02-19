@@ -96,6 +96,10 @@ class TestFileUtils:
         result = get_output_path("some/dir/report.pdf", "/out")
         assert result == pathlib.Path("/out/report.md")
 
+    def test_get_output_path_with_input_root(self):
+        result = get_output_path("/in/sub/report.pdf", "/out", input_root="/in")
+        assert result == pathlib.Path("/out/sub/report.md")
+
     def test_collect_files_single(self, tmp_path):
         f = tmp_path / "notes.txt"
         f.write_text("hello")
@@ -109,6 +113,23 @@ class TestFileUtils:
         names = [p.name for p in files]
         assert "a.txt" in names
         assert "c.unknown" not in names
+
+    def test_collect_files_subdir(self, tmp_path):
+        sub = tmp_path / "chapter1"
+        sub.mkdir()
+        (tmp_path / "intro.txt").write_text("intro")
+        (sub / "notes.txt").write_text("notes")
+        files = collect_files(tmp_path)
+        names = [p.name for p in files]
+        assert "intro.txt" in names
+        assert "notes.txt" in names
+
+    def test_collect_files_nested(self, tmp_path):
+        deep = tmp_path / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        (deep / "deep.txt").write_text("deep content")
+        files = collect_files(tmp_path)
+        assert any(p.name == "deep.txt" for p in files)
 
     def test_collect_files_unsupported_returns_empty(self, tmp_path):
         f = tmp_path / "file.xyz"
@@ -296,3 +317,24 @@ class TestCLI:
         assert result.returncode == 0
         assert (out / "notes.md").exists()
         assert (out / "data.md").exists()
+
+    def test_batch_subdir(self, tmp_path):
+        import subprocess
+        import sys
+
+        inp = tmp_path / "input"
+        sub = inp / "chapter1"
+        sub.mkdir(parents=True)
+        out = tmp_path / "output"
+
+        (inp / "intro.txt").write_text("INTRO\n\nHello.\n")
+        (sub / "notes.txt").write_text("NOTES\n\nWorld.\n")
+
+        result = subprocess.run(
+            [sys.executable, "main.py", str(inp), str(out)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert (out / "intro.md").exists()
+        assert (out / "chapter1" / "notes.md").exists()

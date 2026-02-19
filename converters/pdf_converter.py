@@ -113,15 +113,85 @@ class PdfConverter:
         for img_index, img in enumerate(page.images, start=1):
             try:
                 # pdfplumber exposes raw image bytes via the page's PDF object.
-                img_bytes = img.get("stream", None)
-                if img_bytes is None:
+                img_stream = img.get("stream", None)
+                if img_stream is None:
                     continue
-                data = img_bytes.get_data()
-                ext = "png"
-                filename = f"page{page_num}_img{img_index}.{ext}"
-                img_path = images_dir / filename
-                img_path.write_bytes(data)
+                data = img_stream.get_data()
+                if not data:
+                    continue
+
+                filename = self._save_image_data(data, img, page_num, img_index, images_dir)
+                if filename is None:
+                    continue
+
                 rel_path = images_dir.name + "/" + filename
                 sections.append(f"![Image {img_index} on page {page_num}]({rel_path})\n")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not extract image on page %d: %s", page_num, exc)
+
+    @staticmethod
+    def _save_image_data(
+        data: bytes,
+        img: dict,
+        page_num: int,
+        img_index: int,
+        images_dir: Path,
+    ) -> str | None:
+        """Save *data* to *images_dir* in the correct format and return the filename.
+
+        Returns ``None`` if the image could not be saved.
+        """
+        # JPEG images: magic bytes FF D8.  get_data() returns the raw JPEG
+        # stream so we can write it directly with the correct extension.
+        if data[:2] == b"\xff\xd8":
+            filename = f"page{page_num}_img{img_index}.jpg"
+            (images_dir / filename).write_bytes(data)
+            return filename
+
+        # JPEG 2000 images: JP2 file signature or raw J2K codestream.
+        if data[:4] == b"\x00\x00\x00\x0c" or data[:2] == b"\xff\x4f":
+            filename = f"page{page_num}_img{img_index}.jp2"
+            (images_dir / filename).write_bytes(data)
+            return filename
+
+        # PNG images: may appear directly in a PDF stream.
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            filename = f"page{page_num}_img{img_index}.png"
+            (images_dir / filename).write_bytes(data)
+            return filename
+
+        # Raw pixel data (e.g. after FlateDecode).  Use Pillow to encode it
+        # as a well-formed PNG so the output file is not corrupted.
+        try:
+            from PIL import Image
+
+            width = img.get("width") or (img.get("srcsize") or (0, 0))[0]
+            height = img.get("height") or (img.get("srcsize") or (0, 0))[1]
+            if not width or not height:
+                logger.warning(
+                    "Could not determine image dimensions on page %d", page_num
+                )
+                return None
+            width, height = int(width), int(height)
+            colorspace = img.get("colorspace", ["DeviceRGB"])
+            cs_name = (
+                str(colorspace[0])
+                if isinstance(colorspace, list) and colorspace
+                else str(colorspace)
+            )
+            if "Gray" in cs_name:
+                mode = "L"
+            elif "CMYK" in cs_name:
+                mode = "CMYK"
+            else:
+                mode = "RGB"
+
+            pil_img = Image.frombytes(mode, (width, height), data)
+            filename = f"page{page_num}_img{img_index}.png"
+            pil_img.save(str(images_dir / filename), format="PNG")
+            return filename
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not decode raw image data on page %d: %s", page_num, exc
+            )
+            return None

@@ -71,6 +71,7 @@ def convert_file(
     output_dir: Path,
     registry: dict,
     images_dir: Path | None,
+    input_root: Path | None = None,
 ) -> bool:
     """Convert a single *input_path* and write output into *output_dir*.
 
@@ -79,6 +80,8 @@ def convert_file(
         output_dir: Destination directory for the ``.md`` file.
         registry: Mapping of type-id → converter instance.
         images_dir: Where to save extracted images/assets (may be ``None``).
+        input_root: Root directory of the input tree.  When provided the
+            relative sub-path is preserved inside *output_dir*.
 
     Returns:
         ``True`` on success, ``False`` on failure.
@@ -93,7 +96,7 @@ def convert_file(
         logger.warning("No converter registered for type '%s': %s", file_type, input_path)
         return False
 
-    output_path = get_output_path(input_path, output_dir)
+    output_path = get_output_path(input_path, output_dir, input_root)
 
     try:
         converter.convert(
@@ -218,6 +221,11 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("No supported files found at: %s", input_path)
         return 1
 
+    # When the input is a directory preserve its subdirectory structure in
+    # the output so that files with the same name in different subdirectories
+    # do not overwrite each other.
+    input_root = input_path if input_path.is_dir() else None
+
     total = len(files)
     logger.info("Found %d file(s) to convert.", total)
 
@@ -232,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     success_count = 0
     for idx, file_path in enumerate(files, start=1):
         print(_progress_bar(idx - 1, total), end="\r", flush=True)
-        ok = convert_file(file_path, output_dir, registry, images_dir)
+        ok = convert_file(file_path, output_dir, registry, images_dir, input_root)
         if ok:
             success_count += 1
 

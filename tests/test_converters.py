@@ -10,6 +10,7 @@ import pytest
 from docx import Document
 from pptx import Presentation
 
+from converters.pdf_converter import PdfConverter
 from converters.text_converter import TextConverter
 from converters.word_converter import WordConverter
 from converters.pptx_converter import PptxConverter
@@ -264,6 +265,97 @@ class TestXlsxConverter:
         XlsxConverter().convert(path, out)
         content = out.read_text()
         assert "*Empty sheet.*" in content
+
+
+# ---------------------------------------------------------------------------
+# PdfConverter – image extraction
+# ---------------------------------------------------------------------------
+
+
+class TestPdfConverterSaveImageData:
+    """Unit-tests for PdfConverter._save_image_data (no real PDF needed)."""
+
+    def _make_jpeg_bytes(self) -> bytes:
+        """Return a minimal valid JPEG byte sequence."""
+        from PIL import Image
+        import io
+
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), color=(255, 0, 0)).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    def _make_png_bytes(self) -> bytes:
+        """Return a minimal valid PNG byte sequence."""
+        from PIL import Image
+        import io
+
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), color=(0, 255, 0)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_jpeg_data_saved_as_jpg(self, tmp_path):
+        data = self._make_jpeg_bytes()
+        assert data[:2] == b"\xff\xd8"
+        img_meta = {"width": 4, "height": 4, "colorspace": ["DeviceRGB"]}
+        filename = PdfConverter._save_image_data(data, img_meta, 1, 1, tmp_path)
+        assert filename == "page1_img1.jpg"
+        assert (tmp_path / filename).exists()
+        saved = (tmp_path / filename).read_bytes()
+        assert saved == data
+
+    def test_png_data_saved_as_png(self, tmp_path):
+        data = self._make_png_bytes()
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+        img_meta = {"width": 4, "height": 4, "colorspace": ["DeviceRGB"]}
+        filename = PdfConverter._save_image_data(data, img_meta, 2, 3, tmp_path)
+        assert filename == "page2_img3.png"
+        assert (tmp_path / filename).exists()
+        saved = (tmp_path / filename).read_bytes()
+        assert saved == data
+
+    def test_raw_rgb_pixels_saved_as_valid_png(self, tmp_path):
+        """Raw RGB pixel data (e.g. after FlateDecode) must be encoded as PNG."""
+        from PIL import Image
+
+        width, height = 4, 4
+        raw = bytes([255, 0, 0] * width * height)  # solid red pixels
+        img_meta = {"width": width, "height": height, "colorspace": ["DeviceRGB"]}
+        filename = PdfConverter._save_image_data(raw, img_meta, 1, 1, tmp_path)
+        assert filename == "page1_img1.png"
+        saved_path = tmp_path / filename
+        assert saved_path.exists()
+        # Verify the saved file is actually a valid PNG, not raw bytes.
+        img = Image.open(saved_path)
+        assert img.format == "PNG"
+        assert img.size == (width, height)
+
+    def test_raw_grayscale_pixels_saved_as_valid_png(self, tmp_path):
+        from PIL import Image
+
+        width, height = 2, 2
+        raw = bytes([128] * width * height)  # grayscale
+        img_meta = {"width": width, "height": height, "colorspace": ["DeviceGray"]}
+        filename = PdfConverter._save_image_data(raw, img_meta, 1, 2, tmp_path)
+        assert filename == "page1_img2.png"
+        saved_path = tmp_path / filename
+        assert saved_path.exists()
+        img = Image.open(saved_path)
+        assert img.format == "PNG"
+        assert img.mode == "L"
+
+    def test_jpeg_not_saved_with_png_extension(self, tmp_path):
+        """Regression: JPEG bytes must never be saved as .png."""
+        data = self._make_jpeg_bytes()
+        img_meta = {"width": 4, "height": 4, "colorspace": ["DeviceRGB"]}
+        filename = PdfConverter._save_image_data(data, img_meta, 1, 1, tmp_path)
+        assert not filename.endswith(".png"), "JPEG data must not be saved as .png"
+
+    def test_invalid_raw_data_returns_none(self, tmp_path):
+        """Unrecognised / corrupt data that Pillow cannot decode returns None."""
+        data = b"\x00\x01\x02\x03"  # not JPEG/PNG, too small for raw pixels
+        img_meta = {"width": 4, "height": 4, "colorspace": ["DeviceRGB"]}
+        filename = PdfConverter._save_image_data(data, img_meta, 1, 1, tmp_path)
+        assert filename is None
 
 
 # ---------------------------------------------------------------------------
